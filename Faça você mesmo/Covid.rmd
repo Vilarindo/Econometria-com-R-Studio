@@ -1,0 +1,143 @@
+---
+title: "Cumulative number of deaths"
+author: "Mine Çetinkaya-Rundel"
+date: "`r Sys.Date()`"
+output: 
+  html_document: 
+    toc: yes
+    toc_float: yes
+---
+##Traduzido e adaptado por Luiz Vilarindo
+## Introdução
+
+Países ao redor do mundo estão respondendo a um surto de doença respiratória causada por um novo coronavírus, COVID-19. O surto começou em Wuhan, China, mas foram identificados casos em um número crescente de outros locais internacionalmente, incluindo os Estados Unidos. Neste relatório, exploramos a trajetória das mortes, de modo cumulativas, em vários países.
+
+Os dados vêm do **coronavirus** package, que extrai dados do repositório Coronavirus do Centro de Ciência e Engenharia de Sistemas da Universidade Johns Hopkins (JHU CCSE). O pacote do coronavirus fornece um conjunto de dados em formato organizado da epidemia do Novo Coronavirus COVID-19 (2019-nCoV) de 2019. O pacote está disponível no GitHub [here](https://github.com/RamiKrispin/coronavirus) e é atualizado diariamente.
+
+Para nossa análise, além do coronavirus package, usaremos os seguintes pacotes para preparação e visualização de dados.
+
+- **tidyverse** package para preparação e visualização de dados
+- **lubridate** package para manuseio de datas
+- **glue** package para construir strings de texto
+- **scales** package para formatação de rótulos dos eixos x e y
+- **ggrepel** package para impressão bonita de etiquetas de países
+
+Faremos uso do **DT** package para exibição interativa de saída tabular no Apêndice.
+
+```{r load-packages, warning=FALSE, message=FALSE}
+library(coronavirus) # devtools::install_github("RamiKrispin/coronavirus")
+library(tidyverse)
+library(lubridate)
+library(glue)
+library(scales)
+library(ggrepel)
+library(DT)
+```
+
+## Preparação do dados
+
+O data frame chamado `coronavirus` dentro do coronavirus package fornece um resumo diario do número de casos de Coronavirus (COVID-19) por pais. Cada linha no data frame representa um pais (ou, onde relevante, um estado/provincia). A lista completa de paises do data frame é forncida no [Appendix]. Perceba que os dados fornecidos nesse pacote oferece o numero de mortes diárias, casos confirmados e  casos recuperados.Para esse relatório, nós focaremos no número de mortes. 
+
+Começaremos fazendo a seleção dos paises aos quais queremos explorar os dados.
+
+```{r select-countries}
+countries <- c(
+  "China",
+  "France",
+  "United Kingdom",
+  "US",
+  "Turkey"
+)
+```
+
+No bloco de código seguinte filtaremos do data frame as mortes pelos paises que foram especificados acima e calcularemos o número cumulativo de mortes. Nós apenas visualizaremos os dados apartir da décima morte confirmada. 
+
+```{r prep-country-data}
+country_data <- coronavirus %>%
+  # filtrar número de mortes por paises de interesse
+  filter(
+    type == "death",
+    country %in% countries
+  ) %>%
+  # Consertar a contagem dos rótulos
+  mutate(
+    country = case_when(
+      country == "United Kingdom" ~ "UK",
+      TRUE ~ country
+    )
+  ) %>%
+  # calcular o número total de casos para cada pais e data
+  group_by(country, date) %>%
+  summarise(tot_cases = sum(cases)) %>%
+  # organizar por data em ordem ascendente
+  arrange(date) %>%
+  # gravar diariamente o número cumulativo de dados como cumulative_cases
+  mutate(cumulative_cases = cumsum(tot_cases)) %>%
+  # usar apenas dias desde que a décima morte tenha sido confirmada
+  filter(cumulative_cases > 9) %>%
+  # grava os dias decorrigos, data final e o rótulo
+  mutate(
+    days_elapsed = as.numeric(date - min(date)),
+    end_date     = if_else(date == max(date), TRUE, FALSE),
+    end_label    = if_else(end_date, country, NULL)
+  ) %>%
+  # ungroup
+  ungroup()
+```
+
+Nós também precisamos tomar nota de "as of date" para a data assim podemos propriamente nomear nossa visualização.
+
+```{r record-as-of-date}
+as_of_date <- country_data %>% 
+  summarise(max(date)) %>% 
+  pull()
+as_of_date_formatted <- glue("{wday(as_of_date, label = TRUE)}, {month(as_of_date, label = TRUE)} {day(as_of_date)}, {year(as_of_date)}")
+```
+
+These data are as of `r as_of_date_formatted`.
+
+## Visualização
+
+A visualização a seguir mostra o número de casos cumulativos vs. dias decorridos desde a 10ª morte confirmada em cada país. O intervalo de tempo plotado para cada país varia, uma vez que alguns países começaram a ver (e relatar) mortes por COVID-19 muito mais tarde do que outros.
+
+```{r visualise, warning=FALSE}
+ggplot(data = country_data,
+       mapping = aes(x = days_elapsed, 
+                     y = cumulative_cases, 
+                     color = country, 
+                     label = end_label)) +
+  # representa o número de casos cumulativos com uma linha
+  geom_line(size = 0.7, alpha = 0.8) +
+  # adiciona pontos ao final da linha
+  geom_point(data = country_data %>% filter(end_date)) +
+  # adiciona os nomes dos países, posicionados acima da linha
+  geom_label_repel(nudge_y = 1, direction = "y", hjust = 1) + 
+  # desliga as legendas
+  guides(color = FALSE) +
+  # usando cores mais bonitas
+  scale_color_viridis_d() +
+  # melhor formatação para o eixo y
+  scale_y_continuous(labels = label_comma()) +
+  # usando tema minimalista
+  theme_minimal() +
+  # custamizando os rótulos
+  labs(
+    x = "Days since 10th confirmed death",
+    y = "Cumulative number of deaths",
+    title = "Cumulative deaths from COVID-19, selected countries",
+    subtitle = glue("Data as of", as_of_date_formatted, .sep = " "),
+    caption = "Source: github.com/RamiKrispin/coronavirus"
+  )
+```
+
+## Apêndice
+
+A lista de países contidos no `coronavirus` data frame é fornecido abaixo.
+
+```{r list-countries, echo=FALSE}
+coronavirus %>%
+  select(country) %>%
+  arrange(country) %>%
+  distinct() %>%
+  datatable()
+```
